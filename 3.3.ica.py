@@ -86,21 +86,17 @@ class ICA():
 
     # 让每个信号的样本均值为0,且协方差(各个信号之间)为单位阵
     def whiten(self, X):
-        # 加None可以认为是将向量进行转置,但是对于矩阵来说,是在中间插入了一维
         X = X - X.mean(-1)[:, None]
         A = np.dot(X, X.T)
-        D, P = np.linalg.eig(A)
+        D, U = np.linalg.eig(A)
         D = np.diag(D)
         D_inv = np.linalg.inv(D)
         D_half = np.sqrt(D_inv)
 
-        V = np.dot(D_half, P.T)
+        W0 = np.dot(D_half, U.T)
 
-        return np.dot(V, X), V
+        return np.dot(W0, X), W0
 
-    # 就是sklearn的源码里面的logcosh
-    # 源码里有fun_args,用到一个alpha来调整幅度,这里省略没加
-    # tanh(x)的导数为1-tanh(x)^2
     def _tanh(self, x):
         gx = np.tanh(x)
         # gx = (1 - np.exp(x)) / (1 + np.exp(x))
@@ -130,36 +126,20 @@ class ICA():
         return rebuild_W
 
     # fastICA
-    def fastICA(self, X, fun='tanh'):
+    def fastICA(self, X):
         n, m = X.shape
         p = float(m)
-        if fun == 'tanh':
-            g = self._tanh
-        elif fun == 'exp':
-            g = self._exp
-        elif fun == 'cube':
-            g = self._cube
-        else:
-            raise ValueError('The algorighm does not '
-                             'support the support the user-defined function.'
-                             'You must choose the function in (`tanh`, `exp`, `cube`)')
-        # 不懂, 需要深挖才能知道, sklearn的源码里有这个,查的资料里说是black magic
         X *= np.sqrt(X.shape[1])
 
-        # 随机化W,只要保证非奇异即可,源码里默认使用normal distribution来初始化,对应init_w参数
+        # 随机化W,只要保证非奇异即可
         W = np.ones((n,n), np.float32)
         for i in range(n):
             for j in range(i):
                 W[i,j] = np.random.random()
-
-        # 随机化W的另一种方法,但是这个不保证奇异
-        # W = np.random.random((n, n))
-        # W = self.decorrelation(W)
-
         # 迭代计算W
         maxIter = 300
         for ii in range(maxIter):
-            gwtx, g_wtx = g(np.dot(W, X))
+            gwtx, g_wtx = self._exp(np.dot(W, X))
             W1 = self.decorrelation(np.dot(gwtx, X.T) / p - g_wtx[:, None] * W)
             lim = max(abs(abs(np.diag(np.dot(W1, W.T))) - 1))
             W = W1
@@ -210,10 +190,9 @@ if __name__ == '__main__':
     mixSig = np.asarray(mixSig)
 
 
-    # 以下是调用自己写的fastICA, 默认做了白化处理,不用白化效果貌似不太行
+    # 以下是调用自己写的fastICA
     xWhiten, V = ica.whiten(mixSig)
-    # fun的选择和你假设的S的概率分布函数有关,一般假设为sigmoid函数, 则对应为tanh
-    W = ica.fastICA(xWhiten, fun='tanh')
+    W = ica.fastICA(xWhiten)
     recoverSig = np.dot(np.dot(W, V), mixSig)
     ica.draw(totalSig, 1)
     ica.draw(mixSig, 2)
@@ -223,7 +202,6 @@ if __name__ == '__main__':
     # 以下是调用sklearn包里面的fastICA
     # V对应白化处理的变换矩阵即Z = V * X, W对应S = W * Z
     V, W, S = fastica(mixSig.T)
-    # 不做白化处理的话就不用乘K
     assert ((np.dot(np.dot(W, V), mixSig) - S.T) < 0.001).all()
     ica.draw(totalSig, 1)
     ica.draw(mixSig, 2)
